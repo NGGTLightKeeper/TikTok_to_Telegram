@@ -22,7 +22,7 @@ async def sync_messages(context: ContextTypes.DEFAULT_TYPE):
     messages = await tiktok_handler.get_tiktok_messages(
         session_id=config.TIKTOK_SESSION_ID_COOKIE,
         target_username=config.TIKTOK_TARGET_CHAT_USERNAME,
-        from_date=config.START_DATE
+        from_date_str=config.START_DATE
     )
 
     if not messages:
