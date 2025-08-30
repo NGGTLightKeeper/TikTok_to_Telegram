@@ -1,49 +1,21 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>TikTok Chat Exporter</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      width: 250px;
-      padding: 10px;
-    }
-    h3 {
-      margin-top: 0;
-    }
-    button {
-      width: 100%;
-      padding: 8px;
-      margin-bottom: 5px;
-      cursor: pointer;
-    }
-    #startBtn {
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-    }
-    #stopBtn {
-      background-color: #f44336;
-      color: white;
-      border: none;
-    }
-    #saveBtn {
-      background-color: #008CBA;
-      color: white;
-      border: none;
-    }
-    #status {
-      margin-top: 10px;
-      font-style: italic;
-    }
-  </style>
+  <title>TikTok Link Interceptor</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h3>Chat Exporter</h3>
-  <button id="startBtn">Start Scraping</button>
-  <button id="stopBtn" disabled>Stop</button>
-  <button id="saveBtn" disabled>Save JSON</button>
-  <div id="status">Status: Idle</div>
+  <div class="container">
+    <div class="header">
+      <h3>Link Interceptor</h3>
+      <div id="status-indicator" class="active"></div>
+    </div>
+    <div class="status-panel">
+      <p><strong>Status:</strong> <span id="status-text">Active</span></p>
+      <p>The extension is automatically listening for TikTok links in the background.</p>
+      <p>No action is required.</p>
+    </div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>
