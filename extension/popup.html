@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>TikTok Chat Exporter</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      width: 250px;
+      padding: 10px;
+    }
+    h3 {
+      margin-top: 0;
+    }
+    button {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 5px;
+      cursor: pointer;
+    }
+    #startBtn {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+    }
+    #stopBtn {
+      background-color: #f44336;
+      color: white;
+      border: none;
+    }
+    #saveBtn {
+      background-color: #008CBA;
+      color: white;
+      border: none;
+    }
+    #status {
+      margin-top: 10px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h3>Chat Exporter</h3>
+  <button id="startBtn">Start Scraping</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="saveBtn" disabled>Save JSON</button>
+  <div id="status">Status: Idle</div>
+  <script src="popup.js"></script>
+</body>
+</html>
