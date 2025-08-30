@@ -5,7 +5,7 @@ import logging
 import requests
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_TOKEN
 
 # Setup logging
 logging.basicConfig(
@@ -103,7 +103,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, me
 
 def main() -> None: 
     """Start the bot."""
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Document.APPLICATION_JSON, handle_document))

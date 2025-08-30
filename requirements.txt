@@ -1,6 +1,0 @@
-# requirements.txt
-python-telegram-bot[ext]
-TikTokApi
-requests
-aiohttp
-asyncio
