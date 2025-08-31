@@ -1,11 +1,9 @@
-
 import telebot
 import json
 import os
 import logging
-import threading
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import time
+from datetime import datetime
 from config import TELEGRAM_BOT_TOKEN
 
 # --- Basic Setup ---
@@ -17,43 +15,14 @@ logger = logging.getLogger(__name__)
 
 # --- Globals & Constants ---
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-app = Flask(__name__)
-CORS(app) # This will enable CORS for all routes
+
+# Make paths relative to the script's location
+BOT_DIR = os.path.dirname(__file__)
+CHAT_ID_FILE = os.path.join(BOT_DIR, 'chat_id.txt')
+JSON_FILE_PATH = os.path.join(BOT_DIR, 'urls_to_send.json')
+ARCHIVE_DIR = os.path.join(BOT_DIR, 'sent_archive')
 
 TARGET_CHAT_ID = None
-CHAT_ID_FILE = 'chat_id.txt'
-
-# --- Flask Web Server ---
-
-@app.route('/send_url', methods=['POST'])
-def receive_url():
-    """Endpoint to receive a URL from the Chrome extension."""
-    global TARGET_CHAT_ID
-    if not TARGET_CHAT_ID:
-        logger.warning("Received a URL but no target chat ID is set.")
-        return jsonify({"status": "error", "message": "Target chat ID not set. Use /start in the Telegram bot."}), 500
-
-    try:
-        data = request.get_json()
-        logger.info(f"Received data: {data}")
-        url = data.get('url')
-        if not url:
-            raise ValueError("No URL provided in the request.")
-
-        # Send the URL to the target Telegram chat
-        bot.send_message(TARGET_CHAT_ID, url)
-        logger.info(f"Successfully sent URL to chat {TARGET_CHAT_ID}: {url}")
-        return jsonify({"status": "success", "message": "URL sent."})
-
-    except Exception as e:
-        logger.error(f"Error in /send_url: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 400
-
-def run_flask_app():
-    """Run the Flask app on port 5000."""
-    # Using 0.0.0.0 to make it accessible from the network if needed,
-    # though for local extension communication 127.0.0.1 is sufficient.
-    app.run(host='0.0.0.0', port=5000)
 
 # --- Telegram Bot Logic ---
 
@@ -66,7 +35,9 @@ def load_chat_id():
                 TARGET_CHAT_ID = int(f.read().strip())
                 logger.info(f"Loaded target chat ID: {TARGET_CHAT_ID}")
             except (ValueError, TypeError):
-                logger.error("Could not read chat ID from file. File might be corrupted.")
+                logger.error(f"Could not read chat ID from file '{CHAT_ID_FILE}'.")
+    else:
+        logger.warning(f"Chat ID file '{CHAT_ID_FILE}' not found.")
 
 def save_chat_id(chat_id):
     """Save the target chat ID to the file."""
@@ -78,26 +49,66 @@ def save_chat_id(chat_id):
 
 @bot.message_handler(commands=['start'])
 def set_target_chat(message):
-    """Sets the chat where this command is issued as the target for receiving URLs."""
+    """Sets the chat where this command is issued as the target for receiving URLs.""" 
     save_chat_id(message.chat.id)
     bot.reply_to(
-        message, 
-        "This chat has been set as the target for receiving TikTok links. "
-        "The browser extension will now send links here."
+        message,
+        "This chat has been set as the target for sending links. "
+        "Use the /send command to send all collected links."
     )
+
+@bot.message_handler(commands=['send'])
+def send_collected_urls(message):
+    """Reads URLs from the JSON file and sends them to the target chat."""
+    global TARGET_CHAT_ID
+    if not TARGET_CHAT_ID:
+        bot.reply_to(message, "Target chat is not set. Please use /start first.")
+        return
+
+    if not os.path.exists(JSON_FILE_PATH):
+        bot.reply_to(message, "No links in the queue to send.")
+        return
+
+    try:
+        with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
+            urls = json.load(f)
+
+        if not urls:
+            bot.reply_to(message, "The link queue is empty.")
+            return
+
+        bot.reply_to(message, f"Starting to send {len(urls)} links...")
+
+        count = 0
+        for url in reversed(urls):
+            bot.send_message(TARGET_CHAT_ID, url)
+            count += 1
+            time.sleep(3) # Sleep to avoid hitting Telegram rate limits
+
+        logger.info(f"Successfully sent {count} URLs.")
+        bot.send_message(TARGET_CHAT_ID, f"Finished sending {count} links.")
+
+        # Archive the file to prevent re-sending
+        if not os.path.exists(ARCHIVE_DIR):
+            os.makedirs(ARCHIVE_DIR)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        archive_file_path = os.path.join(ARCHIVE_DIR, f"sent_links_{timestamp}.json")
+        os.rename(JSON_FILE_PATH, archive_file_path)
+        logger.info(f"Archived processed file to '{archive_file_path}'.")
+
+    except json.JSONDecodeError:
+        bot.reply_to(message, "Error: Could not read the link file. It might be corrupted.")
+        logger.error(f"Failed to decode {JSON_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"An error occurred during sending: {e}")
+        bot.reply_to(message, f"An unexpected error occurred: {e}")
 
 # --- Main Execution ---
 
 def main():
-    """Load initial data and start both Flask and Telebot."""
+    """Load initial data and start the bot."""
     load_chat_id()
-    
-    # Start Flask in a separate thread
-    flask_thread = threading.Thread(target=run_flask_app, daemon=True)
-    flask_thread.start()
-    logger.info("Flask server started in a background thread.")
-
-    # Start the bot polling in the main thread
     logger.info("Telegram bot is starting...")
     bot.polling(non_stop=True)
 
