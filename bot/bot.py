@@ -5,6 +5,7 @@ import logging
 import time
 from datetime import datetime
 from config import TELEGRAM_BOT_TOKEN
+import yt_dlp
 
 # --- Basic Setup ---
 logging.basicConfig(
@@ -59,7 +60,7 @@ def set_target_chat(message):
 
 @bot.message_handler(commands=['send'])
 def send_collected_urls(message):
-    """Reads URLs from the JSON file and sends them to the target chat."""
+    """Reads URLs from the JSON file, downloads the videos, and sends them to the target chat."""
     global TARGET_CHAT_ID
     if not TARGET_CHAT_ID:
         bot.reply_to(message, "Target chat is not set. Please use /start first.")
@@ -77,16 +78,41 @@ def send_collected_urls(message):
             bot.reply_to(message, "The link queue is empty.")
             return
 
-        bot.reply_to(message, f"Starting to send {len(urls)} links...")
+        bot.reply_to(message, f"Starting to send {len(urls)} videos...")
 
         count = 0
         for url in reversed(urls):
-            bot.send_message(TARGET_CHAT_ID, url)
-            count += 1
-            time.sleep(3) # Sleep to avoid hitting Telegram rate limits
+            video_path = None
+            try:
+                # Configure yt-dlp to download the video
+                ydl_opts = {
+                    'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
+                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best' # Prefer mp4, up to 1080p
+                }
 
-        logger.info(f"Successfully sent {count} URLs.")
-        bot.send_message(TARGET_CHAT_ID, f"Finished sending {count} links.")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(url, download=True)
+                    video_path = ydl.prepare_filename(info_dict)
+
+                # Send the video
+                with open(video_path, 'rb') as video:
+                    bot.send_video(TARGET_CHAT_ID, video, timeout=120)
+                
+                count += 1
+                time.sleep(3) # Sleep to avoid hitting Telegram rate limits
+
+            except Exception as e:
+                logger.error(f"Failed to process and send video for {url}: {e}")
+                bot.send_message(TARGET_CHAT_ID, f"""Could not process video from URL:
+{url}
+Error: {e}""")
+            finally:
+                # Clean up the downloaded file
+                if video_path and os.path.exists(video_path):
+                    os.remove(video_path)
+
+        logger.info(f"Successfully sent {count} videos.")
+        bot.send_message(TARGET_CHAT_ID, f"Finished sending {count} videos.")
 
         # Archive the file to prevent re-sending
         if not os.path.exists(ARCHIVE_DIR):
