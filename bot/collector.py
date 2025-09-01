@@ -7,10 +7,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # --- Basic Setup ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Logging is configured in main.py
 logger = logging.getLogger(__name__)
 
 # --- Globals & Constants ---

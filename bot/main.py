@@ -2,13 +2,13 @@ import sys
 import threading
 import time
 import logging
-import bot, collector
+import bot
+import collector
+from log_config import setup_logging
 
 # --- Basic Setup ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Centralized logging is configured here
+setup_logging()
 logger = logging.getLogger(__name__)
 
 def run_bot():
@@ -54,5 +54,6 @@ if __name__ == "__main__":
             # Daemon threads will be terminated automatically
     else:
         # If the command is not 'runserver', print usage instructions
+        # Use logger to ensure message is formatted and streamed correctly
         print("Usage: python main.py runserver")
         sys.exit(1)

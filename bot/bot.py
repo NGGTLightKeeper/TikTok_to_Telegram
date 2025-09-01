@@ -8,10 +8,7 @@ from config import TELEGRAM_BOT_TOKEN
 import yt_dlp
 
 # --- Basic Setup ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Logging is configured in main.py
 logger = logging.getLogger(__name__)
 
 # --- Globals & Constants ---
@@ -84,10 +81,11 @@ def send_collected_urls(message):
         for url in reversed(urls):
             video_path = None
             try:
-                # Configure yt-dlp to download the video
+                # Configure yt-dlp to download the video and use our logger
                 ydl_opts = {
                     'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
-                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best' # Prefer mp4, up to 1080p
+                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best',
+                    'logger': logging.getLogger('yt_dlp')
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
