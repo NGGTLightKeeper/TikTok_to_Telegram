@@ -99,7 +99,7 @@ def send_collected_urls(message):
                     bot.send_video(TARGET_CHAT_ID, video, timeout=120)
                 
                 count += 1
-                time.sleep(3) # Sleep to avoid hitting Telegram rate limits
+                time.sleep(7) # Sleep to avoid hitting Telegram rate limits
 
             except Exception as e:
                 logger.error(f"Failed to process and send video for {url}: {e}")
