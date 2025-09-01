@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper. All Rights Reserved.
+
 import logging
 import sys
 

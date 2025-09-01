@@ -1,4 +1,4 @@
-// --- De-duplication Cache using chrome.storage ---
+// Copyright NGGT.LightKeeper. All Rights Reserved.
 
 const CACHE_KEY = 'sentUrlsCache';
 const CACHE_MAX_SIZE = 5000; // Keep a reasonable limit

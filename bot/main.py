@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper. All Rights Reserved.
+
 import sys
 import threading
 import time

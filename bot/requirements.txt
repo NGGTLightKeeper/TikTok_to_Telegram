@@ -1,3 +1,0 @@
-pyTelegramBotAPI
-Flask
-yt-dlp
