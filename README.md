@@ -20,7 +20,7 @@ The project consists of two main components:
 ## Requirements
 - Python 3.13+
 - Python libraries:
-  - [telegram_bot_core](https://github.com/NGGTLightKeeper/telegram_bot_core) or `pyTelegramBotAPI`
+  - [TelegramBotCore](https://github.com/NGGTLightKeeper/TelegramBotCore) or `pyTelegramBotAPI`
   - `Flask`
   - `Flask-Cors`
   - `yt-dlp`
