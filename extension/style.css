@@ -35,7 +35,11 @@ h3 {
 }
 
 #status-indicator.active {
-  background-color: #28a745; /* Green */
+  background-color: #28a745;
+}
+
+#status-indicator.inactive {
+  background-color: #dc3545;
 }
 
 .status-panel {

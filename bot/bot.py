@@ -10,27 +10,33 @@ from config import TELEGRAM_BOT_TOKEN
 import yt_dlp
 
 # --- Basic Setup ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Logger is configured in 'main.py' via 'log_config.py'.
 logger = logging.getLogger(__name__)
 
 # --- Globals & Constants ---
+# Initialize the Telegram bot instance.
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Make paths relative to the script's location
+# --- Path Definitions ---
+# Use the script's directory as a base to ensure paths are correct.
 BOT_DIR = os.path.dirname(__file__)
+# File to store the ID of the target chat for sending videos.
 CHAT_ID_FILE = os.path.join(BOT_DIR, 'chat_id.txt')
+# JSON file where the collector script stores incoming URLs.
 JSON_FILE_PATH = os.path.join(BOT_DIR, 'urls_to_send.json')
+# Directory to move processed JSON files to, preventing re-sends.
 ARCHIVE_DIR = os.path.join(BOT_DIR, 'sent_archive')
 
+# This global variable will hold the target chat ID after it's loaded.
 TARGET_CHAT_ID = None
 
 # --- Telegram Bot Logic ---
 
 def load_chat_id():
-    """Load the target chat ID from the file."""
+    """
+    Load the target chat ID from the 'chat_id.txt' file at startup.
+    This allows the bot to remember the target chat across restarts.
+    """
     global TARGET_CHAT_ID
     if os.path.exists(CHAT_ID_FILE):
         with open(CHAT_ID_FILE, 'r') as f:
@@ -38,12 +44,12 @@ def load_chat_id():
                 TARGET_CHAT_ID = int(f.read().strip())
                 logger.info(f"Loaded target chat ID: {TARGET_CHAT_ID}")
             except (ValueError, TypeError):
-                logger.error(f"Could not read chat ID from file '{CHAT_ID_FILE}'.")
+                logger.error(f"Could not parse chat ID from file '{CHAT_ID_FILE}'.")
     else:
-        logger.warning(f"Chat ID file '{CHAT_ID_FILE}' not found.")
+        logger.warning(f"Chat ID file '{CHAT_ID_FILE}' not found. Use /start to set it.")
 
 def save_chat_id(chat_id):
-    """Save the target chat ID to the file."""
+    """Save the provided chat ID to the 'chat_id.txt' file."""
     global TARGET_CHAT_ID
     TARGET_CHAT_ID = chat_id
     with open(CHAT_ID_FILE, 'w') as f:
@@ -52,20 +58,27 @@ def save_chat_id(chat_id):
 
 @bot.message_handler(commands=['start'])
 def set_target_chat(message):
-    """Sets the chat where this command is issued as the target for receiving URLs.""" 
+    """
+    Command handler for /start.
+    Sets the chat where this command is issued as the target for receiving videos.
+    """
     save_chat_id(message.chat.id)
     bot.reply_to(
         message,
         "This chat has been set as the target for sending links. "
-        "Use the /send command to send all collected links."
+        "Use the /send command to process and send all collected links."
     )
 
 @bot.message_handler(commands=['send'])
 def send_collected_urls(message):
-    """Reads URLs from the JSON file, downloads the videos, and sends them to the target chat."""
+    """
+    Command handler for /send.
+    Reads URLs from the JSON file, downloads the corresponding videos using yt-dlp,
+    sends them to the target chat, and archives the JSON file.
+    """
     global TARGET_CHAT_ID
     if not TARGET_CHAT_ID:
-        bot.reply_to(message, "Target chat is not set. Please use /start first.")
+        bot.reply_to(message, "Target chat is not set. Please use /start in the desired chat first.")
         return
 
     if not os.path.exists(JSON_FILE_PATH):
@@ -80,48 +93,53 @@ def send_collected_urls(message):
             bot.reply_to(message, "The link queue is empty.")
             return
 
-        bot.reply_to(message, f"Starting to send {len(urls)} videos...")
+        bot.reply_to(message, f"Starting to send {len(urls)} videos. This may take a while...")
 
-        count = 0
+        sent_count = 0
+        # Process URLs in reverse order to send the oldest ones first.
         for url in reversed(urls):
             video_path = None
             try:
-                # Configure yt-dlp to download the video
+                # --- Video Download using yt-dlp ---
                 ydl_opts = {
+                    # Save downloaded videos to a temporary file.
                     'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
-                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best' # Prefer mp4, up to 1080p
+                    # Select the best quality MP4 format up to 1080p.
+                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best'
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(url, download=True)
                     video_path = ydl.prepare_filename(info_dict)
 
-                # Send the video
+                # --- Send Video to Telegram ---
                 with open(video_path, 'rb') as video:
+                    # Increased timeout for large video files.
                     bot.send_video(TARGET_CHAT_ID, video, timeout=120)
                 
-                count += 1
-                time.sleep(7) # Sleep to avoid hitting Telegram rate limits
+                sent_count += 1
+                # Pause between sends to avoid hitting Telegram's rate limits.
+                time.sleep(7)
 
             except Exception as e:
                 logger.error(f"Failed to process and send video for {url}: {e}")
-                bot.send_message(TARGET_CHAT_ID, f"""Could not process video from URL:
-{url}
-Error: {e}""")
+                bot.send_message(TARGET_CHAT_ID, f"Could not process video from URL:\n{url}\nError: {e}")
             finally:
-                # Clean up the downloaded file
+                # --- Cleanup ---
+                # Ensure the temporary video file is deleted after sending or on error.
                 if video_path and os.path.exists(video_path):
                     os.remove(video_path)
 
-        logger.info(f"Successfully sent {count} videos.")
-        bot.send_message(TARGET_CHAT_ID, f"Finished sending {count} videos.")
+        logger.info(f"Successfully sent {sent_count} out of {len(urls)} videos.")
+        bot.send_message(TARGET_CHAT_ID, f"Finished sending {sent_count} videos.")
 
-        # Archive the file to prevent re-sending
+        # --- Archive Processed File ---
         if not os.path.exists(ARCHIVE_DIR):
             os.makedirs(ARCHIVE_DIR)
         
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         archive_file_path = os.path.join(ARCHIVE_DIR, f"sent_links_{timestamp}.json")
+        # Rename the file to archive it. This is an atomic operation on most systems.
         os.rename(JSON_FILE_PATH, archive_file_path)
         logger.info(f"Archived processed file to '{archive_file_path}'.")
 
@@ -129,15 +147,16 @@ Error: {e}""")
         bot.reply_to(message, "Error: Could not read the link file. It might be corrupted.")
         logger.error(f"Failed to decode {JSON_FILE_PATH}")
     except Exception as e:
-        logger.error(f"An error occurred during sending: {e}")
+        logger.error(f"An unexpected error occurred during the send process: {e}", exc_info=True)
         bot.reply_to(message, f"An unexpected error occurred: {e}")
 
 # --- Main Execution ---
 
 def main():
-    """Load initial data and start the bot."""
+    """Load initial data and start the bot's polling loop."""
     load_chat_id()
     logger.info("Telegram bot is starting...")
+    # Start listening for messages from Telegram. non_stop=True ensures it runs continuously.
     bot.polling(non_stop=True)
 
 if __name__ == '__main__':
