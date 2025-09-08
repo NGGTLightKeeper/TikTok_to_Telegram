@@ -53,7 +53,7 @@ pip install pyTelegramBotAPI Flask Flask-Cors yt-dlp
 
 ### 3. Bot Configuration and Usage
 
-1.  Open your Telegram client and find the bot you created with @BotFather.
+1.  Open your Telegram client and find the bot you created with [@BotFather](https://t.me/BotFather/).
 2.  In the chat where you want to receive videos, send the `/start` command. The bot will register that chat as the destination.
 3.  Browse TikTok. As you interact with videos, the extension will silently collect the links.
 4.  When you are ready, go back to the target chat in Telegram and send the `/send` command. The bot will begin downloading and sending the collected videos.
