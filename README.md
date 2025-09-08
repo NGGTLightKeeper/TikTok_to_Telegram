@@ -1,6 +1,6 @@
 # TT2TG (TikTok to Telegram)
 
-This repository contains the TT2TG project, a system designed to automatically intercept TikTok video links and send the corresponding videos to a Telegram chat.
+This repository contains the **TT2TG** project, a system designed to automatically intercept TikTok video links and send the corresponding videos to a Telegram chat.
 
 The project consists of two main components:
 1.  A **Browser Extension** that runs in the background, detects API calls for TikTok videos, and sends the video URLs to a local server.
@@ -18,13 +18,14 @@ The project consists of two main components:
 6.  When the user sends the `/send` command, the bot reads the URL queue, downloads each video, sends it to the target chat, and archives the processed links.
 
 ## Requirements
-- Python 3.13+
-- Python libraries:
-  - [TelegramBotCore](https://github.com/NGGTLightKeeper/TelegramBotCore) or `pyTelegramBotAPI`
-  - `Flask`
-  - `Flask-Cors`
-  - `yt-dlp`
-- A Chromium-based web browser (e.g., Google Chrome, Microsoft Edge)
+*  Python 3.13
+*  TelegramBotCore / Python libraries:
+   -   [TelegramBotCore 2.2 (FULL)](https://github.com/NGGTLightKeeper/TelegramBotCore/releases/tag/TelegramBotCore_ver.2.2)
+   -   `pyTelegramBotAPI`
+   -   `Flask`
+   -   `Flask-Cors`
+   -   `yt-dlp`
+*  A Chromium-based web browser (e.g., Google Chrome, Microsoft Edge)
 
 You can install the required Python packages using pip:
 ```bash
