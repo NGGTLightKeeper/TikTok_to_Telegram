@@ -74,8 +74,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // --- API Endpoints ---
 const ITEM_DETAIL_URL = "https://www.tiktok.com/api/im/item_detail/";
-// This is a guessed endpoint for chat messages. It might need adjustment.
-const CHAT_MESSAGE_URL = "https://www.tiktok.com/api/im/v2/messages/get";
 
 // --- Main Logic: Intercept TikTok API Requests ---
 
@@ -117,50 +115,13 @@ chrome.webRequest.onCompleted.addListener(
             console.warn("Could not find uniqueId or videoId in API response.", data);
           }
         }
-
-        // --- Handler for Chat Messages ---
-        else if (details.url.startsWith(CHAT_MESSAGE_URL) && details.statusCode === 200) {
-          console.log("Intercepted chat message API request:", details.url);
-
-          const response = await fetch(details.url);
-          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-          const data = await response.json();
-
-          // Assuming the response contains a list of messages.
-          if (data && data.messages && Array.isArray(data.messages)) {
-            for (const message of data.messages) {
-              const messageId = message?.messageId;
-              // We expect messages to have text content.
-              const text = message?.content?.text;
-              const author = message?.senderInfo?.userName;
-
-              if (messageId && text && author) {
-                // De-duplicate each message individually by its ID.
-                const isDuplicate = await isDuplicateAndUpdateCache(messageId);
-                if (isDuplicate) continue;
-
-                const payload = {
-                  type: 'message',
-                  itemId: messageId,
-                  author: author,
-                  text: text,
-                };
-
-                console.log(`Sending item of type 'message' to server:`, payload);
-                await sendToServer(payload);
-              }
-            }
-          } else {
-            console.warn("Chat API response did not contain an array of messages.", data);
-          }
-        }
       } catch (error) {
         console.error("Error processing intercepted request:", error);
       }
     })();
   },
   // Filter for all the URL patterns we want to intercept.
-  { urls: [ `${ITEM_DETAIL_URL}*`, `${CHAT_MESSAGE_URL}*` ] }
+  { urls: [ `${ITEM_DETAIL_URL}*` ] }
 );
 
 /**
@@ -182,12 +143,45 @@ async function sendToServer(payload) {
     console.log("Server response:", serverData);
 }
 
-// --- Popup Communication ---
-// This listener allows the popup to check if the background script is active.
+// --- Communication from Content & Popup Scripts ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Handle state check from popup
   if (request.action === 'getState') {
     sendResponse({ isReady: true });
+    return true; // Keep the message channel open for the asynchronous response.
   }
-  // 'return true' is necessary to indicate that sendResponse will be called asynchronously.
-  return true;
+
+  // Handle new text message from content script
+  if (request.action === 'text_message') {
+    (async () => {
+      try {
+        const { author, text } = request.data;
+        // Generate a unique ID for the message to allow for de-duplication.
+        // A combination of timestamp and text content is reasonably unique.
+        const messageId = `msg_${Date.now()}_${text.slice(0, 20)}`;
+
+        const isDuplicate = await isDuplicateAndUpdateCache(messageId);
+        if (isDuplicate) {
+          sendResponse({ status: 'duplicate' });
+          return;
+        }
+
+        const payload = {
+          type: 'message',
+          itemId: messageId,
+          author: author,
+          text: text,
+        };
+
+        console.log(`Sending item of type 'message' from content script to server:`, payload);
+        await sendToServer(payload);
+        sendResponse({ status: 'success' });
+      } catch (error) {
+        console.error('Error handling text message from content script:', error);
+        sendResponse({ status: 'error', message: error.message });
+      }
+    })();
+
+    return true; // Indicate that sendResponse will be called asynchronously.
+  }
 });

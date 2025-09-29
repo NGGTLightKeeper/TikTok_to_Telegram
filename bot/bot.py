@@ -238,8 +238,8 @@ def send_collected_items(message):
 
         sent_count = 0
         total_count = len(items)
-        # Process items in chronological order (oldest first).
-        for item in items:
+        # Process items in reverse chronological order (newest first).
+        for item in reversed(items):
             item_type = item.get('type')
             success = False
 
