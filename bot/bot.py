@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from config import TELEGRAM_BOT_TOKEN
 import yt_dlp
+import requests
+import shutil
 
 # --- Basic Setup ---
 # Logger is configured in 'main.py' via 'log_config.py'.
@@ -69,12 +71,151 @@ def set_target_chat(message):
         "Use the /send command to process and send all collected links."
     )
 
+# --- Item Type Handlers ---
+
+def handle_video_item(item, chat_id):
+    """Handles downloading and sending a video item."""
+    url = item.get('url')
+    if not url:
+        logger.error(f"Video item is missing 'url'. Item: {item}")
+        return False
+
+    video_path = None
+    try:
+        ydl_opts = {
+            'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
+            'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best'
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            video_path = ydl.prepare_filename(info_dict)
+
+        with open(video_path, 'rb') as video:
+            bot.send_video(chat_id, video, timeout=120)
+
+        logger.info(f"Successfully sent video from URL: {url}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to process and send video for {url}: {e}", exc_info=True)
+        bot.send_message(chat_id, f"Could not process video from URL:\n{url}\nError: {e}")
+        return False
+    finally:
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
+
+def handle_photo_video_item(item, chat_id):
+    """
+    Handles a 'photo_video' item by downloading its images and sending them as a media group.
+    """
+    item_id = item.get('itemId')
+    api_response = item.get('apiResponse')
+
+    if not all([item_id, api_response]):
+        logger.error(f"Photo_video item {item_id} is missing 'itemId' or 'apiResponse'.")
+        return False
+
+    temp_dir = None
+    try:
+        # Extract image URLs from the API response
+        images = api_response.get('itemInfo', {}).get('itemStruct', {}).get('imagePost', {}).get('images', [])
+        image_urls = [img.get('displayImage', {}).get('url_list', [None])[0] for img in images]
+        image_urls = [url for url in image_urls if url] # Filter out any None URLs
+
+        if not image_urls:
+            logger.warning(f"No image URLs found for item {item_id}.")
+            bot.send_message(chat_id, f"Could not find images for post: {item.get('url')}")
+            return False
+
+        # Create a unique temporary directory for this item's images
+        temp_dir = os.path.join(BOT_DIR, f'temp_images_{item_id}')
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+
+        media_group = []
+        downloaded_paths = []
+
+        # Download each image
+        for i, url in enumerate(image_urls):
+            try:
+                response = requests.get(url, stream=True)
+                response.raise_for_status()
+
+                # Use a generic filename, as the extension is often missing in the URL
+                file_path = os.path.join(temp_dir, f'image_{i}.jpg')
+                with open(file_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                downloaded_paths.append(file_path)
+            except requests.RequestException as e:
+                logger.error(f"Failed to download image {i+1} for item {item_id} from {url}: {e}")
+                # Continue to try sending the successfully downloaded images
+                continue
+
+        if not downloaded_paths:
+            logger.error(f"Failed to download any images for item {item_id}.")
+            return False
+
+        # Prepare media group for sending
+        for path in downloaded_paths:
+            with open(path, 'rb') as photo_file:
+                # For the first photo, we read it directly. For subsequent ones, we attach them.
+                # This seems to be a reliable way to handle media groups with local files.
+                media_group.append(telebot.types.InputMediaPhoto(photo_file.read()))
+
+        if media_group:
+            bot.send_media_group(chat_id, media_group, timeout=120)
+            logger.info(f"Successfully sent {len(media_group)} photos for item {item_id}.")
+            return True
+        else:
+            logger.warning(f"Media group was empty for item {item_id}, nothing to send.")
+            return False
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while handling photo_video item {item_id}: {e}", exc_info=True)
+        bot.send_message(chat_id, f"An error occurred while processing a photo post: {item.get('url')}")
+        return False
+    finally:
+        # Clean up the temporary directory and its contents
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            logger.info(f"Cleaned up temporary directory: {temp_dir}")
+
+def handle_message_item(item, chat_id):
+    """Handles formatting and sending a text message item."""
+    author = item.get('author')
+    text = item.get('text')
+    item_id = item.get('itemId')
+
+    if not all([author, text, item_id]):
+        logger.error(f"Message item is missing required fields. Item ID: {item_id}")
+        return False
+
+    try:
+        # Format the message as requested: **Author:** Text
+        # Using 'MarkdownV2' parse mode requires escaping special characters.
+        # However, for simple bolding, the default mode or 'Markdown' is safer.
+        # Let's stick to a simple format that's less prone to parsing errors.
+        formatted_message = f"*{author}:* {text}"
+
+        bot.send_message(chat_id, formatted_message, parse_mode='Markdown')
+        logger.info(f"Successfully sent message item: {item_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send message item {item_id}: {e}", exc_info=True)
+        # Optionally, send a plain text version if formatting fails
+        try:
+            bot.send_message(chat_id, f"Failed to send formatted message from {author}:\n{text}")
+        except Exception as fallback_e:
+            logger.error(f"Failed to send fallback message for item {item_id}: {fallback_e}")
+        return False
+
 @bot.message_handler(commands=['send'])
-def send_collected_urls(message):
+def send_collected_items(message):
     """
     Command handler for /send.
-    Reads URLs from the JSON file, downloads the corresponding videos using yt-dlp,
-    sends them to the target chat, and archives the JSON file.
+    Reads items from the JSON file, processes them based on their type,
+    sends the content to the target chat, and archives the JSON file.
     """
     global TARGET_CHAT_ID
     if not TARGET_CHAT_ID:
@@ -82,56 +223,49 @@ def send_collected_urls(message):
         return
 
     if not os.path.exists(JSON_FILE_PATH):
-        bot.reply_to(message, "No links in the queue to send.")
+        bot.reply_to(message, "No items in the queue to send.")
         return
 
     try:
         with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
-            urls = json.load(f)
+            items = json.load(f)
 
-        if not urls:
-            bot.reply_to(message, "The link queue is empty.")
+        if not isinstance(items, list) or not items:
+            bot.reply_to(message, "The item queue is empty or invalid.")
             return
 
-        bot.reply_to(message, f"Starting to send {len(urls)} videos. This may take a while...")
+        bot.reply_to(message, f"Starting to send {len(items)} items. This may take a while...")
 
         sent_count = 0
-        # Process URLs in reverse order to send the oldest ones first.
-        for url in reversed(urls):
-            video_path = None
-            try:
-                # --- Video Download using yt-dlp ---
-                ydl_opts = {
-                    # Save downloaded videos to a temporary file.
-                    'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
-                    # Select the best quality MP4 format up to 1080p.
-                    'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best'
-                }
+        total_count = len(items)
+        # Process items in chronological order (oldest first).
+        for item in items:
+            item_type = item.get('type')
+            success = False
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info_dict = ydl.extract_info(url, download=True)
-                    video_path = ydl.prepare_filename(info_dict)
+            if item_type == 'video':
+                success = handle_video_item(item, TARGET_CHAT_ID)
+            elif item_type == 'photo_video':
+                success = handle_photo_video_item(item, TARGET_CHAT_ID)
+            elif item_type == 'message':
+                success = handle_message_item(item, TARGET_CHAT_ID)
+            else:
+                # Handle legacy string-based URLs for backward compatibility
+                if isinstance(item, str):
+                    legacy_item = {'type': 'video', 'url': item}
+                    success = handle_video_item(legacy_item, TARGET_CHAT_ID)
+                else:
+                    logger.warning(f"Unknown or missing item type: {item_type}. Item: {item}")
+                    bot.send_message(TARGET_CHAT_ID, f"Unknown item type: {item_type}. Skipping.")
 
-                # --- Send Video to Telegram ---
-                with open(video_path, 'rb') as video:
-                    # Increased timeout for large video files.
-                    bot.send_video(TARGET_CHAT_ID, video, timeout=120)
-                
+            if success:
                 sent_count += 1
-                # Pause between sends to avoid hitting Telegram's rate limits.
-                time.sleep(7)
 
-            except Exception as e:
-                logger.error(f"Failed to process and send video for {url}: {e}")
-                bot.send_message(TARGET_CHAT_ID, f"Could not process video from URL:\n{url}\nError: {e}")
-            finally:
-                # --- Cleanup ---
-                # Ensure the temporary video file is deleted after sending or on error.
-                if video_path and os.path.exists(video_path):
-                    os.remove(video_path)
+            # Pause between sends to avoid hitting Telegram's rate limits.
+            time.sleep(5)
 
-        logger.info(f"Successfully sent {sent_count} out of {len(urls)} videos.")
-        bot.send_message(TARGET_CHAT_ID, f"Finished sending {sent_count} videos.")
+        logger.info(f"Successfully sent {sent_count} out of {total_count} items.")
+        bot.send_message(TARGET_CHAT_ID, f"Finished sending. Processed {sent_count}/{total_count} items.")
 
         # --- Archive Processed File ---
         if not os.path.exists(ARCHIVE_DIR):
@@ -139,12 +273,11 @@ def send_collected_urls(message):
         
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         archive_file_path = os.path.join(ARCHIVE_DIR, f"sent_links_{timestamp}.json")
-        # Rename the file to archive it. This is an atomic operation on most systems.
         os.rename(JSON_FILE_PATH, archive_file_path)
         logger.info(f"Archived processed file to '{archive_file_path}'.")
 
     except json.JSONDecodeError:
-        bot.reply_to(message, "Error: Could not read the link file. It might be corrupted.")
+        bot.reply_to(message, "Error: Could not read the item file. It might be corrupted.")
         logger.error(f"Failed to decode {JSON_FILE_PATH}")
     except Exception as e:
         logger.error(f"An unexpected error occurred during the send process: {e}", exc_info=True)

@@ -72,69 +72,115 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 */
 
+// --- API Endpoints ---
+const ITEM_DETAIL_URL = "https://www.tiktok.com/api/im/item_detail/";
+// This is a guessed endpoint for chat messages. It might need adjustment.
+const CHAT_MESSAGE_URL = "https://www.tiktok.com/api/im/v2/messages/get";
+
 // --- Main Logic: Intercept TikTok API Requests ---
 
 chrome.webRequest.onCompleted.addListener(
   (details) => {
-    // This is the specific API endpoint that returns video details when you share a video.
-    const targetUrlPrefix = "https://www.tiktok.com/api/im/item_detail/";
+    // Use an immediately-invoked async function to handle all operations.
+    (async () => {
+      try {
+        // --- Handler for Video/Photo Items ---
+        if (details.url.startsWith(ITEM_DETAIL_URL) && details.statusCode === 200) {
+          console.log("Intercepted item detail API request:", details.url);
 
-    if (details.url.startsWith(targetUrlPrefix) && details.statusCode === 200) {
-      console.log("Intercepted TikTok API request:", details.url);
-
-      // Use an immediately-invoked async function to handle the asynchronous operations.
-      (async () => {
-        try {
-          // First, check if we've already processed this exact API call.
+          // For item details, the URL itself is unique enough for de-duplication.
           const isDuplicate = await isDuplicateAndUpdateCache(details.url);
-          if (isDuplicate) {
-            return; // Stop if it's a duplicate.
-          }
+          if (isDuplicate) return;
 
-          // Re-fetch the API response to get its content.
-          // Note: Manifest V3 does not allow direct access to response bodies in webRequest listeners.
           const response = await fetch(details.url);
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const data = await response.json();
-          console.log("Successfully fetched and parsed API data:", data);
 
-          // Extract the author's username and the video ID from the JSON response.
-          const uniqueId = data?.itemInfo?.itemStruct?.author?.uniqueId;
-          const videoId = data?.itemInfo?.itemStruct?.id;
+          const itemStruct = data?.itemInfo?.itemStruct;
+          const uniqueId = itemStruct?.author?.uniqueId;
+          const videoId = itemStruct?.id;
 
           if (uniqueId && videoId) {
-            // Construct the user-friendly TikTok video URL.
             const tiktokUrl = `https://www.tiktok.com/@${uniqueId}/video/${videoId}`;
-            console.log("Constructed video URL:", tiktokUrl);
-
-            // Send the constructed URL to the local Python server.
-            const serverResponse = await fetch("http://127.0.0.1:5000/send_url", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: tiktokUrl }),
-            });
+            const isPhoto = itemStruct.imagePost && itemStruct.imagePost.images.length > 0;
+            const itemType = isPhoto ? 'photo_video' : 'video';
+            const payload = {
+              type: itemType,
+              itemId: videoId,
+              url: tiktokUrl,
+              apiResponse: data,
+            };
             
-            if (!serverResponse.ok) {
-                throw new Error(`Server responded with status: ${serverResponse.status}`);
-            }
-
-            const serverData = await serverResponse.json();
-            console.log("Server response:", serverData);
-
+            console.log(`Sending item of type '${itemType}' to server:`, payload);
+            await sendToServer(payload);
           } else {
-            console.warn("Could not find uniqueId or videoId in the API response.", data);
+            console.warn("Could not find uniqueId or videoId in API response.", data);
           }
-        } catch (error) {
-          console.error("Error processing intercepted request:", error);
         }
-      })();
-    }
+
+        // --- Handler for Chat Messages ---
+        else if (details.url.startsWith(CHAT_MESSAGE_URL) && details.statusCode === 200) {
+          console.log("Intercepted chat message API request:", details.url);
+
+          const response = await fetch(details.url);
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          const data = await response.json();
+
+          // Assuming the response contains a list of messages.
+          if (data && data.messages && Array.isArray(data.messages)) {
+            for (const message of data.messages) {
+              const messageId = message?.messageId;
+              // We expect messages to have text content.
+              const text = message?.content?.text;
+              const author = message?.senderInfo?.userName;
+
+              if (messageId && text && author) {
+                // De-duplicate each message individually by its ID.
+                const isDuplicate = await isDuplicateAndUpdateCache(messageId);
+                if (isDuplicate) continue;
+
+                const payload = {
+                  type: 'message',
+                  itemId: messageId,
+                  author: author,
+                  text: text,
+                };
+
+                console.log(`Sending item of type 'message' to server:`, payload);
+                await sendToServer(payload);
+              }
+            }
+          } else {
+            console.warn("Chat API response did not contain an array of messages.", data);
+          }
+        }
+      } catch (error) {
+        console.error("Error processing intercepted request:", error);
+      }
+    })();
   },
-  // Filter for the specific URL pattern we want to intercept.
-  { urls: ["https://*.tiktok.com/api/im/item_detail/*"] }
+  // Filter for all the URL patterns we want to intercept.
+  { urls: [ `${ITEM_DETAIL_URL}*`, `${CHAT_MESSAGE_URL}*` ] }
 );
+
+/**
+ * Sends a data payload to the local Python server.
+ * @param {object} payload The data to send.
+ */
+async function sendToServer(payload) {
+    const serverResponse = await fetch("http://127.0.0.1:5000/send_item", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!serverResponse.ok) {
+        throw new Error(`Server responded with status: ${serverResponse.status}`);
+    }
+
+    const serverData = await serverResponse.json();
+    console.log("Server response:", serverData);
+}
 
 // --- Popup Communication ---
 // This listener allows the popup to check if the background script is active.

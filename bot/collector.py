@@ -22,14 +22,14 @@ JSON_FILE_PATH = os.path.join(os.path.dirname(__file__), 'urls_to_send.json')
 # A lock to prevent race conditions when multiple requests try to write to the file simultaneously.
 FILE_LOCK = threading.Lock()
 
-# Use a deque as a memory-efficient, fixed-size cache to quickly check for recent URLs.
+# Use a deque as a memory-efficient, fixed-size cache to quickly check for recent item IDs.
 # This avoids repeatedly reading the JSON file for de-duplication.
-RECENTLY_PROCESSED_URLS = deque(maxlen=10000)
+RECENTLY_PROCESSED_IDS = deque(maxlen=10000)
 
 
-def load_existing_urls():
+def load_existing_items():
     """
-    Load URLs from the JSON file into the de-duplication cache at startup.
+    Load item IDs from the JSON file into the de-duplication cache at startup.
     This pre-fills the cache to prevent adding duplicates that already exist on disk.
     """
     with FILE_LOCK:
@@ -38,64 +38,79 @@ def load_existing_urls():
             return
         try:
             with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
-                urls = json.load(f)
+                items = json.load(f)
+                if not isinstance(items, list):
+                    logger.warning(f"'{JSON_FILE_PATH}' does not contain a JSON list. Starting fresh.")
+                    return
+
                 count = 0
-                # Populate the deque with URLs from the file.
-                for url in urls:
-                    if url not in RECENTLY_PROCESSED_URLS:
-                        RECENTLY_PROCESSED_URLS.append(url)
-                        count += 1
-                logger.info(f"Loaded {count} unique URLs from '{JSON_FILE_PATH}' into the cache.")
+                for item in items:
+                    # Check if the item is a dictionary and has the required 'itemId'
+                    item_id = item.get('itemId') if isinstance(item, dict) else None
+                    if item_id:
+                        if item_id not in RECENTLY_PROCESSED_IDS:
+                            RECENTLY_PROCESSED_IDS.append(item_id)
+                            count += 1
+                    else:
+                        # Handle old format (plain URL strings) for backward compatibility
+                        if isinstance(item, str) and item not in RECENTLY_PROCESSED_IDS:
+                            RECENTLY_PROCESSED_IDS.append(item)
+                            count += 1
+
+                logger.info(f"Loaded {count} unique item IDs from '{JSON_FILE_PATH}' into the cache.")
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Could not read or parse '{JSON_FILE_PATH}': {e}")
 
 
-@app.route('/send_url', methods=['POST'])
-def receive_url():
+@app.route('/send_item', methods=['POST'])
+def receive_item():
     """
-    API endpoint to receive a URL, de-duplicate it, and save it to the JSON file.
-    This is called by the browser extension.
+    API endpoint to receive a data item, de-duplicate it by its 'itemId',
+    and save it to the JSON file. This is called by the browser extension.
     """
     try:
         data = request.get_json()
-        if not data or 'url' not in data:
-            raise ValueError("Invalid JSON or no 'url' key provided in the request.")
-        
-        url = data['url']
+        if not data or 'type' not in data or 'itemId' not in data:
+            raise ValueError("Invalid JSON: 'type' and 'itemId' keys are required.")
+
+        item_id = data['itemId']
 
         # --- De-duplication Check ---
-        # First, check the in-memory cache for the URL. This is very fast.
-        if url in RECENTLY_PROCESSED_URLS:
-            logger.info(f"Duplicate URL detected in cache, skipping: {url}")
-            return jsonify({"status": "success", "message": "Duplicate URL, skipped."})
-        
-        # If not in the cache, add it immediately to prevent processing simultaneous requests for the same URL.
-        RECENTLY_PROCESSED_URLS.append(url)
-        
+        if item_id in RECENTLY_PROCESSED_IDS:
+            logger.info(f"Duplicate item ID detected in cache, skipping: {item_id}")
+            return jsonify({"status": "success", "message": "Duplicate item, skipped."})
+
+        RECENTLY_PROCESSED_IDS.append(item_id)
+
         # --- Thread-Safe File Writing ---
         with FILE_LOCK:
-            all_urls = []
-            # Read the existing URLs from the file.
+            all_items = []
             if os.path.exists(JSON_FILE_PATH):
-                with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
-                    try:
-                        all_urls = json.load(f)
-                    except json.JSONDecodeError:
-                        # If the file is corrupted or empty, start with a fresh list.
-                        logger.warning(f"'{JSON_FILE_PATH}' was corrupted or empty. Starting fresh.")
-            
-            # Although we checked the cache, we perform a final check on the list read from the file.
-            # This handles the rare case where a URL was written by another thread after the cache check.
-            if url not in all_urls:
-                all_urls.append(url)
-                # Write the updated list back to the file.
-                with open(JSON_FILE_PATH, 'w', encoding='utf-8') as f:
-                    json.dump(all_urls, f, indent=4)
-                logger.info(f"Successfully saved new URL. Total URLs: {len(all_urls)}")
-            else:
-                logger.info(f"Duplicate URL detected in file, skipping: {url}")
+                try:
+                    with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
+                        all_items = json.load(f)
+                        # Ensure we are working with a list
+                        if not isinstance(all_items, list):
+                            logger.warning(f"'{JSON_FILE_PATH}' was not a list. Re-initializing.")
+                            all_items = []
+                except (json.JSONDecodeError, IOError):
+                    logger.warning(f"'{JSON_FILE_PATH}' was corrupted or empty. Starting fresh.")
+                    all_items = []
 
-        return jsonify({"status": "success", "message": "URL processed."})
+            # Final check on the list read from the file to handle race conditions.
+            # We create a set of existing IDs for a fast lookup.
+            existing_ids = {
+                item.get('itemId') for item in all_items if isinstance(item, dict)
+            }
+            if item_id not in existing_ids:
+                all_items.append(data)
+                with open(JSON_FILE_PATH, 'w', encoding='utf-8') as f:
+                    json.dump(all_items, f, indent=4)
+                logger.info(f"Successfully saved new item ({data.get('type')}, ID: {item_id}). Total items: {len(all_items)}")
+            else:
+                logger.info(f"Duplicate item ID detected in file, skipping: {item_id}")
+
+        return jsonify({"status": "success", "message": "Item processed."})
 
     except Exception as e:
         logger.error(f"An error occurred in /send_url: {e}", exc_info=True)
@@ -103,11 +118,12 @@ def receive_url():
 
 
 def main():
-    """Main function to start the Flask server for URL collection."""
-    load_existing_urls()  # Pre-fill the cache with existing URLs.
-    logger.info("Starting Flask server for URL collection on http://127.0.0.1:5000")
+    """Main function to start the Flask server for item collection."""
+    load_existing_items()  # Pre-fill the cache with existing item IDs.
+    logger.info("Starting Flask server for item collection on http://127.0.0.1:5000")
     # The server runs indefinitely, listening for requests from the extension.
     app.run(host='127.0.0.1', port=5000)
+
 
 if __name__ == '__main__':
     main()
