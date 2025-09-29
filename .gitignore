@@ -184,3 +184,6 @@ cython_debug/
 # Local configuration files
 settings/settings.py
 logs/
+bot/chat_id.txt
+bot/urls_to_send.json
+bot/sent_archive/*
