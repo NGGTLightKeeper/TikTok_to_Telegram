@@ -1,0 +1,5 @@
+pyTelegramBotAPI
+yt-dlp
+Flask
+Flask-Cors
+requests

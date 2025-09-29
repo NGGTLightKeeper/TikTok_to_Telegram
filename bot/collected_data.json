@@ -1,0 +1,25 @@
+[
+    {
+        "type": "video",
+        "data": {
+            "url": "https://www.tiktok.com/@testuser/video/12345"
+        }
+    },
+    {
+        "type": "slideshow",
+        "data": {
+            "images": [
+                "url1.jpg",
+                "url2.jpg"
+            ],
+            "author": "testuser",
+            "itemId": "67890"
+        }
+    },
+    {
+        "type": "chat_message",
+        "data": {
+            "text": "Hello, this is a test message."
+        }
+    }
+]

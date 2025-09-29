@@ -16,20 +16,42 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing for all routes.
 
-# Define the absolute path for the JSON file that stores collected URLs.
-JSON_FILE_PATH = os.path.join(os.path.dirname(__file__), 'urls_to_send.json')
+# Define the absolute path for the JSON file that stores collected data.
+JSON_FILE_PATH = os.path.join(os.path.dirname(__file__), 'collected_data.json')
 
 # A lock to prevent race conditions when multiple requests try to write to the file simultaneously.
 FILE_LOCK = threading.Lock()
 
-# Use a deque as a memory-efficient, fixed-size cache to quickly check for recent URLs.
+# Use a deque as a memory-efficient, fixed-size cache to quickly check for recent unique identifiers.
 # This avoids repeatedly reading the JSON file for de-duplication.
-RECENTLY_PROCESSED_URLS = deque(maxlen=10000)
+RECENTLY_PROCESSED_IDS = deque(maxlen=10000)
 
 
-def load_existing_urls():
+def get_item_id(item):
     """
-    Load URLs from the JSON file into the de-duplication cache at startup.
+    Extracts a unique identifier from a collected item for de-duplication purposes.
+    - For videos, it's the URL.
+    - For slideshows, it's the item ID.
+    - For chat messages, we use the text content (less reliable, but best effort).
+    """
+    item_type = item.get('type')
+    data = item.get('data', {})
+
+    if item_type == 'video':
+        return data.get('url')
+    if item_type == 'slideshow':
+        # Item ID is a more reliable unique identifier than a list of image URLs.
+        return str(data.get('itemId'))
+    if item_type == 'chat_message':
+        # No reliable unique ID for messages, so we use the text.
+        # This might not be perfect but prevents simple duplicates.
+        return data.get('text')
+    return None
+
+
+def load_existing_ids():
+    """
+    Load unique IDs from the JSON file into the de-duplication cache at startup.
     This pre-fills the cache to prevent adding duplicates that already exist on disk.
     """
     with FILE_LOCK:
@@ -38,75 +60,72 @@ def load_existing_urls():
             return
         try:
             with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
-                urls = json.load(f)
+                items = json.load(f)
                 count = 0
-                # Populate the deque with URLs from the file.
-                for url in urls:
-                    if url not in RECENTLY_PROCESSED_URLS:
-                        RECENTLY_PROCESSED_URLS.append(url)
+                for item in items:
+                    item_id = get_item_id(item)
+                    if item_id and item_id not in RECENTLY_PROCESSED_IDS:
+                        RECENTLY_PROCESSED_IDS.append(item_id)
                         count += 1
-                logger.info(f"Loaded {count} unique URLs from '{JSON_FILE_PATH}' into the cache.")
+                logger.info(f"Loaded {count} unique item IDs from '{JSON_FILE_PATH}' into the cache.")
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Could not read or parse '{JSON_FILE_PATH}': {e}")
 
 
-@app.route('/send_url', methods=['POST'])
-def receive_url():
+@app.route('/collect_data', methods=['POST'])
+def receive_data():
     """
-    API endpoint to receive a URL, de-duplicate it, and save it to the JSON file.
-    This is called by the browser extension.
+    API endpoint to receive structured data (video, slideshow, chat message),
+    de-duplicate it, and save it to the JSON file.
     """
     try:
-        data = request.get_json()
-        if not data or 'url' not in data:
-            raise ValueError("Invalid JSON or no 'url' key provided in the request.")
+        payload = request.get_json()
+        if not payload or 'type' not in payload or 'data' not in payload:
+            raise ValueError("Invalid JSON or missing 'type'/'data' keys.")
         
-        url = data['url']
+        item_id = get_item_id(payload)
+        if not item_id:
+            logger.warning(f"Could not determine a unique ID for item: {payload}")
+            return jsonify({"status": "error", "message": "Item lacks a unique identifier."}), 400
 
         # --- De-duplication Check ---
-        # First, check the in-memory cache for the URL. This is very fast.
-        if url in RECENTLY_PROCESSED_URLS:
-            logger.info(f"Duplicate URL detected in cache, skipping: {url}")
-            return jsonify({"status": "success", "message": "Duplicate URL, skipped."})
+        if item_id in RECENTLY_PROCESSED_IDS:
+            logger.info(f"Duplicate item detected in cache, skipping: {item_id}")
+            return jsonify({"status": "success", "message": "Duplicate item, skipped."})
         
-        # If not in the cache, add it immediately to prevent processing simultaneous requests for the same URL.
-        RECENTLY_PROCESSED_URLS.append(url)
+        RECENTLY_PROCESSED_IDS.append(item_id)
         
         # --- Thread-Safe File Writing ---
         with FILE_LOCK:
-            all_urls = []
-            # Read the existing URLs from the file.
+            all_items = []
             if os.path.exists(JSON_FILE_PATH):
                 with open(JSON_FILE_PATH, 'r', encoding='utf-8') as f:
                     try:
-                        all_urls = json.load(f)
+                        all_items = json.load(f)
                     except json.JSONDecodeError:
-                        # If the file is corrupted or empty, start with a fresh list.
                         logger.warning(f"'{JSON_FILE_PATH}' was corrupted or empty. Starting fresh.")
             
-            # Although we checked the cache, we perform a final check on the list read from the file.
-            # This handles the rare case where a URL was written by another thread after the cache check.
-            if url not in all_urls:
-                all_urls.append(url)
-                # Write the updated list back to the file.
+            # Final check to ensure the ID is not already in the file.
+            existing_ids = {get_item_id(item) for item in all_items if get_item_id(item)}
+            if item_id not in existing_ids:
+                all_items.append(payload)
                 with open(JSON_FILE_PATH, 'w', encoding='utf-8') as f:
-                    json.dump(all_urls, f, indent=4)
-                logger.info(f"Successfully saved new URL. Total URLs: {len(all_urls)}")
+                    json.dump(all_items, f, indent=4)
+                logger.info(f"Successfully saved new {payload.get('type')} item. Total items: {len(all_items)}")
             else:
-                logger.info(f"Duplicate URL detected in file, skipping: {url}")
+                logger.info(f"Duplicate item detected in file, skipping: {item_id}")
 
-        return jsonify({"status": "success", "message": "URL processed."})
+        return jsonify({"status": "success", "message": "Item processed."})
 
     except Exception as e:
-        logger.error(f"An error occurred in /send_url: {e}", exc_info=True)
+        logger.error(f"An error occurred in /collect_data: {e}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
 def main():
-    """Main function to start the Flask server for URL collection."""
-    load_existing_urls()  # Pre-fill the cache with existing URLs.
-    logger.info("Starting Flask server for URL collection on http://127.0.0.1:5000")
-    # The server runs indefinitely, listening for requests from the extension.
+    """Main function to start the Flask server for data collection."""
+    load_existing_ids()  # Pre-fill the cache with existing item IDs.
+    logger.info("Starting Flask server for data collection on http://127.0.0.1:5000")
     app.run(host='127.0.0.1', port=5000)
 
 if __name__ == '__main__':

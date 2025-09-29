@@ -98,43 +98,112 @@ chrome.webRequest.onCompleted.addListener(
             throw new Error(`HTTP error! status: ${response.status}`);
           }
           const data = await response.json();
-          console.log("Successfully fetched and parsed API data:", data);
+          const data = await response.json();
+          const itemStruct = data?.itemInfo?.itemStruct;
+          let payload = null;
 
-          // Extract the author's username and the video ID from the JSON response.
-          const uniqueId = data?.itemInfo?.itemStruct?.author?.uniqueId;
-          const videoId = data?.itemInfo?.itemStruct?.id;
-
-          if (uniqueId && videoId) {
-            // Construct the user-friendly TikTok video URL.
-            const tiktokUrl = `https://www.tiktok.com/@${uniqueId}/video/${videoId}`;
-            console.log("Constructed video URL:", tiktokUrl);
-
-            // Send the constructed URL to the local Python server.
-            const serverResponse = await fetch("http://127.0.0.1:5000/send_url", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: tiktokUrl }),
-            });
+          // --- Check for Slideshow (Image Post) ---
+          if (itemStruct && itemStruct.imagePost && itemStruct.imagePost.images.length > 0) {
+            console.log("Detected a slideshow post.");
+            const imageUrls = itemStruct.imagePost.images.map(img => img.displayImage.urlList[0]);
+            payload = {
+              type: "slideshow",
+              data: {
+                images: imageUrls,
+                author: itemStruct.author.uniqueId,
+                itemId: itemStruct.id,
+              }
+            };
             
-            if (!serverResponse.ok) {
-                throw new Error(`Server responded with status: ${serverResponse.status}`);
-            }
-
-            const serverData = await serverResponse.json();
-            console.log("Server response:", serverData);
+          // --- Handle Regular Video Post ---
+          } else if (itemStruct && itemStruct.author && itemStruct.id) {
+            console.log("Detected a video post.");
+            const tiktokUrl = `https://www.tiktok.com/@${itemStruct.author.uniqueId}/video/${itemStruct.id}`;
+            payload = {
+              type: "video",
+              data: {
+                url: tiktokUrl
+              }
+            };
 
           } else {
-            console.warn("Could not find uniqueId or videoId in the API response.", data);
+            console.warn("Could not find expected video or slideshow data in the API response.");
+            return;
           }
+
+          // Send the structured payload to the local Python server.
+          await sendToServer(payload);
+
         } catch (error) {
-          console.error("Error processing intercepted request:", error);
+          console.error("Error processing intercepted item_detail request:", error);
         }
       })();
     }
   },
-  // Filter for the specific URL pattern we want to intercept.
   { urls: ["https://*.tiktok.com/api/im/item_detail/*"] }
 );
+
+// --- Listener for Chat Messages ---
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    const targetUrlPrefix = "https://www.tiktok.com/api/im/chat/message/";
+
+    if (details.url.startsWith(targetUrlPrefix) && details.statusCode === 200) {
+      console.log("Intercepted chat API request:", details.url);
+
+      (async () => {
+        try {
+          const response = await fetch(details.url);
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+          const data = await response.json();
+          const contentStr = data?.body?.message?.content;
+
+          if (contentStr) {
+            const content = JSON.parse(contentStr);
+            if (content && content.text) {
+              const payload = {
+                type: "chat_message",
+                data: {
+                  text: content.text
+                }
+              };
+              // Send the structured payload to the local Python server.
+              await sendToServer(payload);
+            }
+          }
+        } catch (error) {
+          console.error("Error processing intercepted chat request:", error);
+        }
+      })();
+    }
+  },
+  { urls: ["https://*.tiktok.com/api/im/chat/message/*"] }
+);
+
+/**
+ * Sends a structured payload to the backend server.
+ * @param {object} payload The data to send.
+ */
+async function sendToServer(payload) {
+  try {
+    console.log("Sending payload to server:", JSON.stringify(payload, null, 2));
+    const serverResponse = await fetch("http://127.0.0.1:5000/collect_data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!serverResponse.ok) {
+      throw new Error(`Server responded with status: ${serverResponse.status}`);
+    }
+
+    const serverData = await serverResponse.json();
+    console.log("Server response:", serverData);
+  } catch (error) {
+    console.error("Failed to send data to server:", error);
+  }
+}
 
 // --- Popup Communication ---
 // This listener allows the popup to check if the background script is active.
