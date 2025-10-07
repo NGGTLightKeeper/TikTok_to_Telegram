@@ -1,13 +1,14 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
 
-# --- Telegram Bot Configuration ---
-
+# The token obtained from @BotFather on Telegram
 # IMPORTANT: Storing tokens directly in the code is insecure.
-# It is highly recommended to use environment variables for better security.
-# For example, you could load the token like this:
-#
+# For environment variable usage, uncomment the following lines:
 # import os
 # TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-#
-# The token obtained from @BotFather on Telegram.
 TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
+
+# Your Chat ID
+# IMPORTANT: The ID must be an integer, not a string.
+# Example:
+# TARGET_CHAT_ID = -1001234567890
+TARGET_CHAT_ID = None
