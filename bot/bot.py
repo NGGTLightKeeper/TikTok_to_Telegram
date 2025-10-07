@@ -6,7 +6,7 @@ import os
 import logging
 import time
 from datetime import datetime
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID
 import yt_dlp
 import requests
 import shutil
@@ -22,53 +22,27 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # --- Path Definitions ---
 # Use the script's directory as a base to ensure paths are correct.
 BOT_DIR = os.path.dirname(__file__)
-# File to store the ID of the target chat for sending videos.
-CHAT_ID_FILE = os.path.join(BOT_DIR, 'chat_id.txt')
 # JSON file where the collector script stores incoming URLs.
 JSON_FILE_PATH = os.path.join(BOT_DIR, 'urls_to_send.json')
 # Directory to move processed JSON files to, preventing re-sends.
 ARCHIVE_DIR = os.path.join(BOT_DIR, 'sent_archive')
 
-# This global variable will hold the target chat ID after it's loaded.
-TARGET_CHAT_ID = None
 
 # --- Telegram Bot Logic ---
 
-def load_chat_id():
-    """
-    Load the target chat ID from the 'chat_id.txt' file at startup.
-    This allows the bot to remember the target chat across restarts.
-    """
-    global TARGET_CHAT_ID
-    if os.path.exists(CHAT_ID_FILE):
-        with open(CHAT_ID_FILE, 'r') as f:
-            try:
-                TARGET_CHAT_ID = int(f.read().strip())
-                logger.info(f"Loaded target chat ID: {TARGET_CHAT_ID}")
-            except (ValueError, TypeError):
-                logger.error(f"Could not parse chat ID from file '{CHAT_ID_FILE}'.")
-    else:
-        logger.warning(f"Chat ID file '{CHAT_ID_FILE}' not found. Use /start to set it.")
-
-def save_chat_id(chat_id):
-    """Save the provided chat ID to the 'chat_id.txt' file."""
-    global TARGET_CHAT_ID
-    TARGET_CHAT_ID = chat_id
-    with open(CHAT_ID_FILE, 'w') as f:
-        f.write(str(chat_id))
-    logger.info(f"Saved new target chat ID: {chat_id}")
-
 @bot.message_handler(commands=['start'])
-def set_target_chat(message):
+def get_chat_id(message):
     """
     Command handler for /start.
-    Sets the chat where this command is issued as the target for receiving videos.
+    Replies with the current chat's ID and instructions on how to set it in the config.
     """
-    save_chat_id(message.chat.id)
+    chat_id = message.chat.id
     bot.reply_to(
         message,
-        "This chat has been set as the target for sending links. "
-        "Use the /send command to process and send all collected links."
+        "Welcome! To configure this bot, you need to set your chat ID in the configuration file.\n\n"
+        f"Your Chat ID is: `{chat_id}`\n\n"
+        "Please copy this ID, paste it into the `TARGET_CHAT_ID` variable in the `bot/config.py` file, and restart the bot.",
+        parse_mode='Markdown'
     )
 
 # --- Item Type Handlers ---
@@ -217,9 +191,15 @@ def send_collected_items(message):
     Reads items from the JSON file, processes them based on their type,
     sends the content to the target chat, and archives the JSON file.
     """
-    global TARGET_CHAT_ID
+    # Check if the target chat ID is configured.
     if not TARGET_CHAT_ID:
-        bot.reply_to(message, "Target chat is not set. Please use /start in the desired chat first.")
+        bot.reply_to(
+            message,
+            "Error: Target chat ID is not configured.\n"
+            "Please run the /start command in the target chat, get the ID, "
+            "and set it in the `bot/config.py` file."
+        )
+        logger.warning("Send command aborted: TARGET_CHAT_ID is not set in config.py.")
         return
 
     if not os.path.exists(JSON_FILE_PATH):
@@ -286,8 +266,7 @@ def send_collected_items(message):
 # --- Main Execution ---
 
 def main():
-    """Load initial data and start the bot's polling loop."""
-    load_chat_id()
+    """Start the bot's polling loop."""
     logger.info("Telegram bot is starting...")
     # Start listening for messages from Telegram. non_stop=True ensures it runs continuously.
     bot.polling(non_stop=True)
