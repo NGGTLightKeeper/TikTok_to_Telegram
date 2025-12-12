@@ -6,7 +6,7 @@ import os
 import logging
 import time
 from datetime import datetime
-from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, ASE_DELAY_TIME, JSON_FILE_NAME, ARCHIVE_DIR_NAME
 import yt_dlp
 import requests
 import shutil
@@ -23,9 +23,9 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Use the script's directory as a base to ensure paths are correct.
 BOT_DIR = os.path.dirname(__file__)
 # JSON file where the collector script stores incoming URLs.
-JSON_FILE_PATH = os.path.join(BOT_DIR, 'urls_to_send.json')
+JSON_FILE_PATH = os.path.join(BOT_DIR, JSON_FILE_NAME)
 # Directory to move processed JSON files to, preventing re-sends.
-ARCHIVE_DIR = os.path.join(BOT_DIR, 'sent_archive')
+ARCHIVE_DIR = os.path.join(BOT_DIR, ARCHIVE_DIR_NAME)
 
 
 # --- Telegram Bot Logic ---
@@ -58,7 +58,7 @@ def handle_video_item(item, chat_id):
     try:
         ydl_opts = {
             'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
-            'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best'
+            'format': 'best[ext=mp4]/best'
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
@@ -242,7 +242,7 @@ def send_collected_items(message):
                 sent_count += 1
 
             # Pause between sends to avoid hitting Telegram's rate limits.
-            time.sleep(5)
+            time.sleep(ASE_DELAY_TIME)
 
         logger.info(f"Successfully sent {sent_count} out of {total_count} items.")
         bot.send_message(TARGET_CHAT_ID, f"Finished sending. Processed {sent_count}/{total_count} items.")

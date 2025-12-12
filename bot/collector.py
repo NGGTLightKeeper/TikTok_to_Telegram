@@ -7,6 +7,7 @@ import threading
 from collections import deque
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from config import DD_CACHE_LEN, JSON_FILE_NAME
 
 # --- Basic Setup ---
 # The logger is configured in 'main.py' to ensure a consistent format.
@@ -17,14 +18,14 @@ app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing for all routes.
 
 # Define the absolute path for the JSON file that stores collected URLs.
-JSON_FILE_PATH = os.path.join(os.path.dirname(__file__), 'urls_to_send.json')
+JSON_FILE_PATH = os.path.join(os.path.dirname(__file__), JSON_FILE_NAME)
 
 # A lock to prevent race conditions when multiple requests try to write to the file simultaneously.
 FILE_LOCK = threading.Lock()
 
 # Use a deque as a memory-efficient, fixed-size cache to quickly check for recent item IDs.
 # This avoids repeatedly reading the JSON file for de-duplication.
-RECENTLY_PROCESSED_IDS = deque(maxlen=10000)
+RECENTLY_PROCESSED_IDS = deque(maxlen=DD_CACHE_LEN)
 
 
 def load_existing_items():
