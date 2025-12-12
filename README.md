@@ -19,18 +19,9 @@ The project consists of two main components:
 
 ## Requirements
 *  Python 3.13
-*  TelegramBotCore / Python libraries:
-   -   [TelegramBotCore 2.2 (FULL)](https://github.com/NGGTLightKeeper/TelegramBotCore/releases/tag/TelegramBotCore_ver.2.2)
-   -   `pyTelegramBotAPI`
-   -   `Flask`
-   -   `Flask-Cors`
-   -   `yt-dlp`
+*  Python libraries from Core:
+   -   You can install the bot's dependency libraries in the "CORE" directory automatically via install_core.bat/.sh file or do it manually via requirements_core.txt
 *  A Chromium-based web browser (e.g., Google Chrome, Microsoft Edge)
-
-You can install the required Python packages using pip:
-```bash
-pip install pyTelegramBotAPI Flask Flask-Cors yt-dlp
-```
 
 ## Installation and Usage
 

@@ -12,3 +12,17 @@ TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 # Example:
 # TARGET_CHAT_ID = -1001234567890
 TARGET_CHAT_ID = None
+
+
+# Delay time (in seconds) between messages to fix Error 429 (Too Many Requests) from Telegram API
+# Recommended value 5-15 seconds
+ASE_DELAY_TIME = 10
+
+# De-duplication cache length
+DD_CACHE_LEN = 10000
+
+# Collected data JSON file name
+JSON_FILE_NAME = "urls_to_send.json"
+
+# Directory to move processed JSON files to, preventing re-sends.
+ARCHIVE_DIR_NAME = "sent_archive"
