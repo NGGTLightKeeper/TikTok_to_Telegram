@@ -21,6 +21,10 @@ ASE_DELAY_TIME = 10
 # De-duplication cache length
 DD_CACHE_LEN = 10000
 
+
+DISABLE_ERROR_MESSAGES = True
+
+
 # Collected data JSON file name
 JSON_FILE_NAME = "urls_to_send.json"
 

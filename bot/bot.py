@@ -6,7 +6,7 @@ import os
 import logging
 import time
 from datetime import datetime
-from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, ASE_DELAY_TIME, JSON_FILE_NAME, ARCHIVE_DIR_NAME
+from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, ASE_DELAY_TIME, JSON_FILE_NAME, ARCHIVE_DIR_NAME, DISABLE_ERROR_MESSAGES
 import yt_dlp
 import requests
 import shutil
@@ -71,7 +71,8 @@ def handle_video_item(item, chat_id):
         return True
     except Exception as e:
         logger.error(f"Failed to process and send video for {url}: {e}", exc_info=True)
-        bot.send_message(chat_id, f"Could not process video from URL:\n{url}\nError: {e}")
+        if not DISABLE_ERROR_MESSAGES:
+            bot.send_message(chat_id, f"Could not process video from URL:\n{url}\nError: {e}")
         return False
     finally:
         if video_path and os.path.exists(video_path):
@@ -97,7 +98,8 @@ def handle_photo_video_item(item, chat_id):
 
         if not image_urls:
             logger.warning(f"No image URLs found for item {item_id}.")
-            bot.send_message(chat_id, f"Could not find images for post: {item.get('url')}")
+            if not DISABLE_ERROR_MESSAGES:
+                bot.send_message(chat_id, f"Could not find images for post: {item.get('url')}")
             return False
 
         # Create a unique temporary directory for this item's images
@@ -147,7 +149,8 @@ def handle_photo_video_item(item, chat_id):
 
     except Exception as e:
         logger.error(f"An unexpected error occurred while handling photo_video item {item_id}: {e}", exc_info=True)
-        bot.send_message(chat_id, f"An error occurred while processing a photo post: {item.get('url')}")
+        if not DISABLE_ERROR_MESSAGES:
+            bot.send_message(chat_id, f"An error occurred while processing a photo post: {item.get('url')}")
         return False
     finally:
         # Clean up the temporary directory and its contents
@@ -178,10 +181,11 @@ def handle_message_item(item, chat_id):
     except Exception as e:
         logger.error(f"Failed to send message item {item_id}: {e}", exc_info=True)
         # Optionally, send a plain text version if formatting fails
-        try:
-            bot.send_message(chat_id, f"Failed to send formatted message from {author}:\n{text}")
-        except Exception as fallback_e:
-            logger.error(f"Failed to send fallback message for item {item_id}: {fallback_e}")
+        if not DISABLE_ERROR_MESSAGES:
+            try:
+                bot.send_message(chat_id, f"Failed to send formatted message from {author}:\n{text}")
+            except Exception as fallback_e:
+                logger.error(f"Failed to send fallback message for item {item_id}: {fallback_e}")
         return False
 
 @bot.message_handler(commands=['send'])
@@ -236,13 +240,16 @@ def send_collected_items(message):
                     success = handle_video_item(legacy_item, TARGET_CHAT_ID)
                 else:
                     logger.warning(f"Unknown or missing item type: {item_type}. Item: {item}")
-                    bot.send_message(TARGET_CHAT_ID, f"Unknown item type: {item_type}. Skipping.")
+                    if not DISABLE_ERROR_MESSAGES:
+                        bot.send_message(TARGET_CHAT_ID, f"Unknown item type: {item_type}. Skipping.")
 
             if success:
                 sent_count += 1
-
-            # Pause between sends to avoid hitting Telegram's rate limits.
-            time.sleep(ASE_DELAY_TIME)
+                # Pause between successful sends to avoid hitting Telegram's rate limits.
+                time.sleep(ASE_DELAY_TIME)
+            elif not DISABLE_ERROR_MESSAGES:
+                # Pause after sending an error message to avoid hitting Telegram's rate limits.
+                time.sleep(ASE_DELAY_TIME)
 
         logger.info(f"Successfully sent {sent_count} out of {total_count} items.")
         bot.send_message(TARGET_CHAT_ID, f"Finished sending. Processed {sent_count}/{total_count} items.")
@@ -257,11 +264,13 @@ def send_collected_items(message):
         logger.info(f"Archived processed file to '{archive_file_path}'.")
 
     except json.JSONDecodeError:
-        bot.reply_to(message, "Error: Could not read the item file. It might be corrupted.")
         logger.error(f"Failed to decode {JSON_FILE_PATH}")
+        if not DISABLE_ERROR_MESSAGES:
+            bot.reply_to(message, "Error: Could not read the item file. It might be corrupted.")
     except Exception as e:
         logger.error(f"An unexpected error occurred during the send process: {e}", exc_info=True)
-        bot.reply_to(message, f"An unexpected error occurred: {e}")
+        if not DISABLE_ERROR_MESSAGES:
+            bot.reply_to(message, f"An unexpected error occurred: {e}")
 
 # --- Main Execution ---
 
