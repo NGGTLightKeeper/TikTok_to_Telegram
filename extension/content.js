@@ -2,7 +2,7 @@
 
 console.log("TT2TG Content Script Loaded.");
 
-// --- Configuration ---
+// DOM Selectors
 const CHAT_CONTAINER_SELECTOR = '[class*="DivChatMain"]'; // The scrollable container for all messages.
 const MESSAGE_NODE_SELECTOR = '[data-e2e="chat-item"]'; // The direct child element added for each new message.
 const TEXT_SELECTOR = 'p[class*="--PText"]'; // The element containing the message text.
@@ -13,11 +13,7 @@ const OWN_MESSAGE_SELECTOR = 'div[class*="ma4lvt"]'; // A selector to identify o
 const PROCESSED_ATTRIBUTE = 'data-tt2tg-processed'; // Attribute to mark processed messages.
 let chatPartnerName = null; // Will be populated once the chat is found.
 
-/**
- * Finds the main chat container element on the page.
- * Retries a few times in case the script loads before the chat is rendered.
- * @returns {Promise<Element>} A promise that resolves with the chat container element.
- */
+// Poll page DOM until chat container and conversation partner elements are rendered.
 function findChatContainer() {
   return new Promise((resolve, reject) => {
     let attempts = 0;
@@ -44,11 +40,7 @@ function findChatContainer() {
   });
 }
 
-/**
- * Processes a single message node to extract author and text.
- * It sends the data to the background script.
- * @param {Node} node The HTML element of the message.
- */
+// Parse a single chat message element, ignoring own messages and duplicates.
 function processMessageNode(node) {
   // Ensure it's an element node and hasn't been processed yet.
   if (node.nodeType !== Node.ELEMENT_NODE || node.hasAttribute(PROCESSED_ATTRIBUTE)) {
@@ -93,10 +85,7 @@ function processMessageNode(node) {
   }
 }
 
-/**
- * Sets up the MutationObserver to watch for new messages.
- * @param {Element} targetNode The chat container element to observe.
- */
+// Attach MutationObserver to watch chat container for dynamically appended messages.
 function observeChat(targetNode) {
   const config = { childList: true, subtree: true };
 
@@ -128,7 +117,7 @@ function observeChat(targetNode) {
 }
 
 
-// --- Main Execution ---
+// Content script initialization
 // Start the process by finding the chat container and then observing it.
 findChatContainer()
   .then(observeChat)

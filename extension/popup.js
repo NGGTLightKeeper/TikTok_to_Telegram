@@ -1,10 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-/**
- * This script runs when the extension's popup is opened.
- * It sends a message to the background service worker to check its status
- * and updates the UI accordingly.
- */
+// Query background script state on popup load and update status indicators.
 document.addEventListener('DOMContentLoaded', () => {
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
