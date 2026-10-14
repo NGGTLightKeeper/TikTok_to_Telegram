@@ -6,10 +6,9 @@ import os
 import logging
 import time
 from datetime import datetime
-from config import TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, ASE_DELAY_TIME, JSON_FILE_NAME, ARCHIVE_DIR_NAME, DISABLE_ERROR_MESSAGES
-import yt_dlp
-import requests
-import shutil
+import config
+from config import *
+import downloader
 
 # --- Basic Setup ---
 # Logger is configured in 'main.py' via 'log_config.py'.
@@ -21,7 +20,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # --- Path Definitions ---
 # Use the script's directory as a base to ensure paths are correct.
-BOT_DIR = os.path.dirname(__file__)
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # JSON file where the collector script stores incoming URLs.
 JSON_FILE_PATH = os.path.join(BOT_DIR, JSON_FILE_NAME)
 # Directory to move processed JSON files to, preventing re-sends.
@@ -48,7 +47,7 @@ def get_chat_id(message):
 # --- Item Type Handlers ---
 
 def handle_video_item(item, chat_id):
-    """Handles downloading and sending a video item."""
+    """Handles downloading and optionally sending a video item."""
     url = item.get('url')
     if not url:
         logger.error(f"Video item is missing 'url'. Item: {item}")
@@ -56,13 +55,14 @@ def handle_video_item(item, chat_id):
 
     video_path = None
     try:
-        ydl_opts = {
-            'outtmpl': os.path.join(BOT_DIR, 'temp_video_%(id)s.%(ext)s'),
-            'format': 'best[ext=mp4]/best'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=True)
-            video_path = ydl.prepare_filename(info_dict)
+        video_path = downloader.download_video(item)
+        if not video_path:
+            return False
+
+        # If sending is disabled, act purely as a downloader
+        if getattr(config, 'DISABLE_VIDEO_SENDING', False):
+            logger.info(f"Video downloaded successfully (sending disabled): {video_path}")
+            return True
 
         with open(video_path, 'rb') as video:
             bot.send_video(chat_id, video, timeout=120)
@@ -71,72 +71,29 @@ def handle_video_item(item, chat_id):
         return True
     except Exception as e:
         logger.error(f"Failed to process and send video for {url}: {e}", exc_info=True)
-        if not DISABLE_ERROR_MESSAGES:
+        if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
             bot.send_message(chat_id, f"Could not process video from URL:\n{url}\nError: {e}")
         return False
     finally:
-        if video_path and os.path.exists(video_path):
-            os.remove(video_path)
+        downloader.cleanup_video(video_path)
 
 def handle_photo_video_item(item, chat_id):
     """
     Handles a 'photo_video' item by downloading its images and sending them as a media group.
     """
     item_id = item.get('itemId')
-    api_response = item.get('apiResponse')
-
-    if not all([item_id, api_response]):
-        logger.error(f"Photo_video item {item_id} is missing 'itemId' or 'apiResponse'.")
-        return False
-
     temp_dir = None
     try:
-        # Extract image URLs from the API response
-        images = api_response.get('itemInfo', {}).get('itemStruct', {}).get('imagePost', {}).get('images', [])
-        image_urls = [img.get('displayImage', {}).get('url_list', [None])[0] for img in images]
-        image_urls = [url for url in image_urls if url] # Filter out any None URLs
+        temp_dir, downloaded_paths = downloader.download_photos(item)
 
-        if not image_urls:
-            logger.warning(f"No image URLs found for item {item_id}.")
-            if not DISABLE_ERROR_MESSAGES:
+        if not downloaded_paths:
+            if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
                 bot.send_message(chat_id, f"Could not find images for post: {item.get('url')}")
             return False
 
-        # Create a unique temporary directory for this item's images
-        temp_dir = os.path.join(BOT_DIR, f'temp_images_{item_id}')
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
-
         media_group = []
-        downloaded_paths = []
-
-        # Download each image
-        for i, url in enumerate(image_urls):
-            try:
-                response = requests.get(url, stream=True)
-                response.raise_for_status()
-
-                # Use a generic filename, as the extension is often missing in the URL
-                file_path = os.path.join(temp_dir, f'image_{i}.jpg')
-                with open(file_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-
-                downloaded_paths.append(file_path)
-            except requests.RequestException as e:
-                logger.error(f"Failed to download image {i+1} for item {item_id} from {url}: {e}")
-                # Continue to try sending the successfully downloaded images
-                continue
-
-        if not downloaded_paths:
-            logger.error(f"Failed to download any images for item {item_id}.")
-            return False
-
-        # Prepare media group for sending
         for path in downloaded_paths:
             with open(path, 'rb') as photo_file:
-                # For the first photo, we read it directly. For subsequent ones, we attach them.
-                # This seems to be a reliable way to handle media groups with local files.
                 media_group.append(telebot.types.InputMediaPhoto(photo_file.read()))
 
         if media_group:
@@ -149,14 +106,11 @@ def handle_photo_video_item(item, chat_id):
 
     except Exception as e:
         logger.error(f"An unexpected error occurred while handling photo_video item {item_id}: {e}", exc_info=True)
-        if not DISABLE_ERROR_MESSAGES:
+        if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
             bot.send_message(chat_id, f"An error occurred while processing a photo post: {item.get('url')}")
         return False
     finally:
-        # Clean up the temporary directory and its contents
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.info(f"Cleaned up temporary directory: {temp_dir}")
+        downloader.cleanup_photos(temp_dir)
 
 def handle_message_item(item, chat_id):
     """Handles formatting and sending a text message item."""
@@ -169,10 +123,7 @@ def handle_message_item(item, chat_id):
         return False
 
     try:
-        # Format the message as requested: **Author:** Text
-        # Using 'MarkdownV2' parse mode requires escaping special characters.
-        # However, for simple bolding, the default mode or 'Markdown' is safer.
-        # Let's stick to a simple format that's less prone to parsing errors.
+        # Format the message: **Author:** Text
         formatted_message = f"*{author}:* {text}"
 
         bot.send_message(chat_id, formatted_message, parse_mode='Markdown')
@@ -181,7 +132,7 @@ def handle_message_item(item, chat_id):
     except Exception as e:
         logger.error(f"Failed to send message item {item_id}: {e}", exc_info=True)
         # Optionally, send a plain text version if formatting fails
-        if not DISABLE_ERROR_MESSAGES:
+        if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
             try:
                 bot.send_message(chat_id, f"Failed to send formatted message from {author}:\n{text}")
             except Exception as fallback_e:
@@ -193,7 +144,7 @@ def send_collected_items(message):
     """
     Command handler for /send.
     Reads items from the JSON file, processes them based on their type,
-    sends the content to the target chat, and archives the JSON file.
+    sends or downloads the content, and archives the JSON file.
     """
     # Check if the target chat ID is configured.
     if not TARGET_CHAT_ID:
@@ -222,8 +173,14 @@ def send_collected_items(message):
 
         sent_count = 0
         total_count = len(items)
-        # Process items in reverse chronological order (newest first).
-        for item in reversed(items):
+
+        # Order items according to INVERT_PROCESS_ORDER configuration:
+        # Default order is reverse chronological (newest first).
+        # Inverted order is chronological (oldest first).
+        invert_order = getattr(config, 'INVERT_PROCESS_ORDER', False) or getattr(config, 'INVERT_SEND_ORDER', False)
+        ordered_items = items if invert_order else list(reversed(items))
+
+        for item in ordered_items:
             item_type = item.get('type')
             success = False
 
@@ -240,14 +197,16 @@ def send_collected_items(message):
                     success = handle_video_item(legacy_item, TARGET_CHAT_ID)
                 else:
                     logger.warning(f"Unknown or missing item type: {item_type}. Item: {item}")
-                    if not DISABLE_ERROR_MESSAGES:
+                    if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
                         bot.send_message(TARGET_CHAT_ID, f"Unknown item type: {item_type}. Skipping.")
 
             if success:
                 sent_count += 1
-                # Pause between successful sends to avoid hitting Telegram's rate limits.
-                time.sleep(ASE_DELAY_TIME)
-            elif not DISABLE_ERROR_MESSAGES:
+                # If this was a video and sending is disabled, no Telegram API request was made,
+                # so skip delay to allow fast downloading.
+                if not (item_type == 'video' and getattr(config, 'DISABLE_VIDEO_SENDING', False)):
+                    time.sleep(ASE_DELAY_TIME)
+            elif not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
                 # Pause after sending an error message to avoid hitting Telegram's rate limits.
                 time.sleep(ASE_DELAY_TIME)
 
@@ -265,11 +224,11 @@ def send_collected_items(message):
 
     except json.JSONDecodeError:
         logger.error(f"Failed to decode {JSON_FILE_PATH}")
-        if not DISABLE_ERROR_MESSAGES:
+        if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
             bot.reply_to(message, "Error: Could not read the item file. It might be corrupted.")
     except Exception as e:
         logger.error(f"An unexpected error occurred during the send process: {e}", exc_info=True)
-        if not DISABLE_ERROR_MESSAGES:
+        if not getattr(config, 'DISABLE_ERROR_MESSAGES', False):
             bot.reply_to(message, f"An unexpected error occurred: {e}")
 
 # --- Main Execution ---

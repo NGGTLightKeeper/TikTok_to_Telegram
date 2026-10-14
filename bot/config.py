@@ -21,9 +21,21 @@ ASE_DELAY_TIME = 10
 # De-duplication cache length
 DD_CACHE_LEN = 10000
 
-
 DISABLE_ERROR_MESSAGES = True
 
+# Disable deleting downloaded videos after sending (False = delete after sending, True = keep videos in downloads folder)
+DISABLE_VIDEO_DELETION = False
+
+# Disable sending videos to Telegram chat, making the application act purely as a video downloader
+DISABLE_VIDEO_SENDING = False
+
+# If both DISABLE_VIDEO_DELETION and DISABLE_VIDEO_SENDING are enabled,
+# organize downloaded videos into separate folders per author ("uniqueId id")
+ORGANIZE_BY_AUTHOR = False
+
+# Invert video processing/sending order from default (default is newest first, True = oldest first)
+INVERT_PROCESS_ORDER = False
+INVERT_SEND_ORDER = INVERT_PROCESS_ORDER
 
 # Collected data JSON file name
 JSON_FILE_NAME = "urls_to_send.json"
